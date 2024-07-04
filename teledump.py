@@ -3,6 +3,7 @@ import argparse
 from functools import partial
 from telethon.sync import TelegramClient
 from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument, MessageMediaWebPage
+import atexit
 
 def setup_argparse():
     parser = argparse.ArgumentParser(description="Download media from a Telegram conversation")
@@ -32,15 +33,18 @@ def get_filename(message):
 
 def download_media(client, message, base_dir):
     if message.media:
-        filename = get_filename(message)
-        path = os.path.join(base_dir, 'media', filename)
-        client.download_media(message, file=path)
-        print(f'Downloaded {filename}')
+        try:
+            filename = get_filename(message)
+            path = os.path.join(base_dir, 'media', filename)
+            client.download_media(message, file=path)
+            print(f'Downloaded {filename}')
+        except:
+            print(f'Failed to download {filename}')
 
 def process_dialog(client, dialog_name):
     dialogs = client.get_dialogs()
     dialog = next(i for i in dialogs if dialog_name in i.name)
-    base_dir = dialog.name
+    base_dir = os.path.join(os.path.dirname(os.path.realpath(__file__)), "dumps", dialog.name)
 
     create_directories(base_dir)
     
@@ -50,8 +54,10 @@ def process_dialog(client, dialog_name):
     for participant in participants:
         save_json(participant, f"{base_dir}/participants/{participant.id}.json")
     
+    global fallback
     messages = client.iter_messages(dialog)
     for message in messages:
+        fallback = message.id
         save_json(message, f"{base_dir}/messages/{message.id:04}.json")
         download_media(client, message, base_dir)
 
@@ -60,9 +66,15 @@ def main():
     api_id = os.getenv("API_ID")
     api_hash = os.getenv("API_HASH")
 
-    with TelegramClient('teeldump', api_id, api_hash) as client:
+    with TelegramClient('teledump', api_id, api_hash) as client:
         process_dialog(client, args.dialog_name)
 
+def savecounter():
+    with open('counterfile', 'w') as outfile:
+        outfile.write(f"{fallback}")
+
+
 if __name__ == "__main__":
+    atexit.register(savecounter)
     main()
 
