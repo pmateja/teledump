@@ -4,6 +4,9 @@ from functools import partial
 from telethon.sync import TelegramClient
 from telethon.tl.types import MessageMediaPhoto, MessageMediaDocument, MessageMediaWebPage
 import atexit
+import yaml
+import signal
+import sys
 
 def setup_argparse():
     parser = argparse.ArgumentParser(description="Download media from a Telegram conversation")
@@ -39,7 +42,7 @@ def download_media(client, message, base_dir):
             client.download_media(message, file=path)
             print(f'Downloaded {filename}')
         except:
-            print(f'Failed to download {filename}')
+            print(f'Failed to download a file from message {message.id}')
 
 def process_dialog(client, dialog_name):
     dialogs = client.get_dialogs()
@@ -50,16 +53,28 @@ def process_dialog(client, dialog_name):
     
     save_json(dialog.dialog, f"{base_dir}/dialog.json")
     
-    participants = client.get_participants(dialog.id)
-    for participant in participants:
-        save_json(participant, f"{base_dir}/participants/{participant.id}.json")
+    try:
+        participants = client.get_participants(dialog.id)
+        for participant in participants:
+            save_json(participant, f"{base_dir}/participants/{participant.id}.json")
+    except:
+        print("Failed to get participants")
     
+    resume = readcounter()
+    if resume is None:
+        resume = {}
+    message_id = resume.get(dialog.id, 0)
+    print(f">> Resuming from message: {message_id}")
+    messages = client.iter_messages(dialog, reverse=True, offset_id=message_id)
     global fallback
-    messages = client.iter_messages(dialog)
+    global stop
+    stop = False
     for message in messages:
-        fallback = message.id
+        fallback = {dialog.id: message.id}
         save_json(message, f"{base_dir}/messages/{message.id:04}.json")
         download_media(client, message, base_dir)
+        if stop:
+            break
 
 def main():
     args = setup_argparse()
@@ -69,12 +84,32 @@ def main():
     with TelegramClient('teledump', api_id, api_hash) as client:
         process_dialog(client, args.dialog_name)
 
-def savecounter():
-    with open('counterfile', 'w') as outfile:
-        outfile.write(f"{fallback}")
+def handle_signal(signum, frame):
+    # loop.stop()
+    global stop
+    stop = True
+    savecounter()
+    sys.exit(signum)
+    sys.exit(signal.SIGKILL)
 
+
+def savecounter():
+    counter = readcounter()
+    counter.update(fallback)
+    with open('.resume', 'w') as w:
+        yaml.safe_dump(counter, w)
+        print("Saved counter. Exiting...")
+
+def readcounter():
+    try:    
+        with open('.resume') as f:
+            return yaml.safe_load(f)
+    except:
+        return {}
 
 if __name__ == "__main__":
-    atexit.register(savecounter)
+    signal.signal(signal.SIGINT, handle_signal)
+    signal.signal(signal.SIGTERM, handle_signal)
+    #atexit.register(savecounter)
     main()
 
